@@ -17,7 +17,9 @@ const LeftPanelManager = {
 
         stage.add(bgLayer).add(polygonLayer).add(uiLayer);
 
-        const bgImages = []; // Store multiple images
+        const bgImages = [];
+        const thumbnailContainer = document.getElementById('referenceThumbnails');
+        let activeImage = null;
         let selectedGroup = null;
         let imagesLocked = false; // Track lock state
 
@@ -35,6 +37,7 @@ const LeftPanelManager = {
             const imgBox = konvaImg.getClientRect();
             const groups = [];
             polygonLayer.find('.group').forEach(group => {
+                if (group.sourceImage !== konvaImg) return;
                 const groupBox = group.getClientRect();
                 if (imgBox.x + imgBox.width > groupBox.x &&
                     imgBox.x < groupBox.x + groupBox.width &&
@@ -46,8 +49,69 @@ const LeftPanelManager = {
             return groups;
         }
 
-        // Helper to create a background image with undo support
-        function addBackgroundImage(img) {
+        function activateImage(image) {
+            if (drawingMode && activeImage !== image) setDrawingMode(false);
+            if (activeImage) {
+                activeImage.viewState = { x: stage.x(), y: stage.y(), scale: stage.scaleX() };
+            }
+
+            activeImage = image;
+            bgImages.forEach(img => img.visible(img === activeImage));
+            polygonLayer.find('.group').forEach(group => {
+                group.visible(Boolean(activeImage) && group.sourceImage === activeImage);
+            });
+            setSelectedPolygon(null);
+
+            const view = activeImage?.viewState || { x: 0, y: 0, scale: 1 };
+            stage.position({ x: view.x, y: view.y });
+            stage.scale({ x: view.scale, y: view.scale });
+            stage.batchDraw();
+
+            bgImages.forEach(img => {
+                img.thumbnailElement?.classList.toggle('active', img === activeImage);
+            });
+            thumbnailContainer.hidden = bgImages.length === 0;
+        }
+
+        function createThumbnail(konvaImg, name) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'reference-thumbnail';
+            button.title = name || `Reference ${bgImages.length}`;
+            button.setAttribute('aria-label', button.title);
+
+            const image = document.createElement('img');
+            image.src = konvaImg.image().src;
+            image.alt = '';
+            button.appendChild(image);
+            button.addEventListener('click', () => activateImage(konvaImg));
+
+            konvaImg.thumbnailElement = button;
+            thumbnailContainer.appendChild(button);
+            thumbnailContainer.hidden = false;
+        }
+
+        function removeBackgroundImage(konvaImg) {
+            konvaImg.remove();
+            const index = bgImages.indexOf(konvaImg);
+            if (index > -1) bgImages.splice(index, 1);
+            konvaImg.thumbnailElement?.remove();
+            if (activeImage === konvaImg) {
+                activeImage = null;
+                activateImage(bgImages[0] || null);
+            }
+            tr.nodes([]);
+            bgLayer.batchDraw();
+        }
+
+        function restoreBackgroundImage(konvaImg) {
+            bgLayer.add(konvaImg);
+            bgImages.push(konvaImg);
+            thumbnailContainer.appendChild(konvaImg.thumbnailElement);
+            activateImage(konvaImg);
+        }
+
+        function addBackgroundImage(img, name = '', activate = true) {
             const scale = Math.min(stage.width() / img.width, stage.height() / img.height);
             const konvaImg = new Konva.Image({
                 x: (stage.width() - img.width * scale) / 2,
@@ -55,30 +119,40 @@ const LeftPanelManager = {
                 image: img,
                 width: img.width * scale,
                 height: img.height * scale,
-                draggable: !imagesLocked
+                draggable: !imagesLocked,
+                visible: false
             });
+            konvaImg.viewState = { x: 0, y: 0, scale: 1 };
 
             bgLayer.add(konvaImg);
             bgImages.push(konvaImg);
-            bgLayer.batchDraw();
+            createThumbnail(konvaImg, name);
+            if (activate || !activeImage) activateImage(konvaImg);
 
-            // Undo for image add
             UndoManager.push({
-                undo: () => {
-                    konvaImg.remove();
-                    const idx = bgImages.indexOf(konvaImg);
-                    if (idx > -1) bgImages.splice(idx, 1);
-                    tr.nodes([]);
-                    bgLayer.batchDraw();
-                },
-                redo: () => {
-                    bgLayer.add(konvaImg);
-                    bgImages.push(konvaImg);
-                    bgLayer.batchDraw();
-                }
+                undo: () => removeBackgroundImage(konvaImg),
+                redo: () => restoreBackgroundImage(konvaImg)
             });
 
             return konvaImg;
+        }
+
+        function loadImageSources(sources) {
+            if (!sources.length) return Promise.resolve(0);
+
+            UndoManager.beginBatch();
+            return Promise.all(sources.map(source => new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => resolve(addBackgroundImage(img, source.name, false));
+                img.onerror = () => resolve(null);
+                img.src = source.dataURL;
+            }))).then(results => {
+                UndoManager.endBatch();
+                const loaded = results.filter(Boolean);
+                if (loaded.length > 0) activateImage(loaded[0]);
+                FeedbackManager.show(`${loaded.length} image(s) loaded`);
+                return loaded.length;
+            });
         }
 
         // Lock/Unlock Images button
@@ -137,46 +211,49 @@ const LeftPanelManager = {
             }
         });
 
-        // Drawing mode toggle button
-        document.getElementById('toggleDrawingMode').addEventListener('click', () => {
-            drawingMode = !drawingMode;
-            const button = document.getElementById('toggleDrawingMode');
-            button.classList.toggle('drawing-active');
+        function setDrawingMode(active) {
+            if (drawingMode === active) return;
+            if (active && !activeImage) {
+                FeedbackManager.show('Open a reference image first');
+                return;
+            }
+            drawingMode = active;
+            document.getElementById('toggleDrawingMode').classList.toggle('drawing-active', active);
 
-            if (drawingMode) {
-                //button.textContent = 'Exit Drawing Mode';
-                // Initialize drawing mode with callback for when polygon is created
+            if (active) {
                 drawingModeHandlers = PolygonManager.initDrawingMode(
                     stage,
                     polygonLayer,
                     () => drawingMode,
                     (newPolygon) => {
-                        selectedGroup = newPolygon;
-                        // Guard against duplicate callback (initDrawingMode fires twice)
-                        if (!newPolygon._undoPushed) {
-                            newPolygon._undoPushed = true;
-                            UndoManager.push({
-                                undo: () => {
-                                    newPolygon.remove();
-                                    dirtyPolygons.delete(newPolygon._id);
-                                    if (selectedGroup === newPolygon) selectedGroup = null;
-                                    polygonLayer.batchDraw();
-                                },
-                                redo: () => {
-                                    polygonLayer.add(newPolygon);
-                                    dirtyPolygons.add(newPolygon._id);
-                                    selectedGroup = newPolygon;
-                                    polygonLayer.batchDraw();
-                                }
-                            });
-                        }
+                        newPolygon.sourceImage = activeImage;
+                        setSelectedPolygon(newPolygon);
+                        UndoManager.push({
+                            undo: () => {
+                                newPolygon.remove();
+                                dirtyPolygons.delete(newPolygon._id);
+                                if (selectedGroup === newPolygon) selectedGroup = null;
+                                polygonLayer.batchDraw();
+                            },
+                            redo: () => {
+                                activateImage(newPolygon.sourceImage);
+                                polygonLayer.add(newPolygon);
+                                newPolygon.visible(true);
+                                dirtyPolygons.add(newPolygon._id);
+                                setSelectedPolygon(newPolygon);
+                                polygonLayer.batchDraw();
+                            }
+                        });
                     },
                     dirtyPolygons
                 );
             } else {
-                //button.textContent = 'Drawing Mode';
                 cancelDrawing();
             }
+        }
+
+        document.getElementById('toggleDrawingMode').addEventListener('click', () => {
+            setDrawingMode(!drawingMode);
         });
 
         // Cancel drawing function
@@ -189,12 +266,9 @@ const LeftPanelManager = {
             }
         };
 
-        // ESC key handler for canceling drawing
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && drawingMode) {
-                cancelDrawing();
-                document.getElementById('toggleDrawingMode').textContent = 'Drawing Mode';
-                drawingMode = false;
+                setDrawingMode(false);
             }
 
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -202,107 +276,131 @@ const LeftPanelManager = {
             }
         });
 
-        // Extract All button
+        function extractPolygon(group, showErrors = false) {
+            const sourceImage = group.sourceImage || PolygonManager.getUnderlyingImages(group, stage)[0];
+            if (!sourceImage) {
+                if (showErrors) FeedbackManager.show('No source image under this selection.');
+                return false;
+            }
+
+            const textureData = ImageProcessing.extractTexture(group, sourceImage);
+            if (!textureData || !window.rightPanel) {
+                if (showErrors) FeedbackManager.show('Could not create texture from this selection.');
+                return false;
+            }
+
+            window.rightPanel.updateTexture(group._id, textureData);
+            dirtyPolygons.delete(group._id);
+            return true;
+        }
+
         document.getElementById('extractAllLeft').addEventListener('click', () => {
-            polygonLayer.find('.group').forEach(async group => {
-                if (!dirtyPolygons.has(group._id)) return; // skip unchanged polygons
+            let extracted = 0;
+            polygonLayer.find('.group').forEach(group => {
+                if (dirtyPolygons.has(group._id) && extractPolygon(group)) extracted++;
+            });
+            FeedbackManager.show(`${extracted} texture(s) created`);
+        });
 
-                const overlappingImgs = PolygonManager.getUnderlyingImages(group, stage);
-                if (!overlappingImgs.length) return;
+        function showPolygonContextMenu(x, y, group) {
+            document.getElementById('konva-context-menu')?.remove();
 
-                const topmostImage = overlappingImgs[0];
-                const textureData = ImageProcessing.extractTexture(group, topmostImage);
-
-                if (textureData && window.rightPanel) {
-                    window.rightPanel.updateTexture(group._id, textureData);
-                }
+            const menu = document.createElement('div');
+            menu.id = 'konva-context-menu';
+            Object.assign(menu.style, {
+                position: 'fixed',
+                top: `${y}px`,
+                left: `${x}px`,
+                background: '#f9f9f9',
+                border: '1px solid #888',
+                borderRadius: '4px',
+                padding: '0',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+                zIndex: 1000,
+                minWidth: '150px'
             });
 
-            // Clear dirty set after extraction
-            dirtyPolygons.clear();
-        });
+            const item = document.createElement('div');
+            item.innerText = 'Create Texture';
+            Object.assign(item.style, {
+                padding: '8px 12px',
+                cursor: 'pointer',
+                userSelect: 'none',
+                color: '#000',
+                fontFamily: 'sans-serif'
+            });
+            item.addEventListener('mouseenter', () => {
+                item.style.background = '#0078d4';
+                item.style.color = '#fff';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+                item.style.color = '#000';
+            });
+            item.addEventListener('click', () => {
+                if (extractPolygon(group, true)) FeedbackManager.show('Texture created!');
+                menu.remove();
+            });
 
-        // Upload handler
-        document.getElementById(uploadId).addEventListener('change', e => {
-            const file = e.target.files[0];
-            if (!file) return;
+            menu.appendChild(item);
+            document.body.appendChild(menu);
 
-            const reader = new FileReader();
-            reader.onload = evt => {
-                const img = new Image();
-                img.onload = () => {
-                    addBackgroundImage(img);
-                };
-                img.src = evt.target.result;
+            const removeMenu = () => {
+                menu.remove();
+                window.removeEventListener('click', removeMenu);
             };
-            reader.readAsDataURL(file);
+            setTimeout(() => window.addEventListener('click', removeMenu), 0);
+        }
+
+        stage.on('contextmenu', (e) => {
+            let node = e.target;
+            let group = null;
+            while (node && node !== stage) {
+                if (node instanceof Konva.Group && node.name() === 'group') {
+                    group = node;
+                    break;
+                }
+                node = node.getParent();
+            }
+            if (!group) return;
+
+            e.evt.preventDefault();
+            setSelectedPolygon(group);
+            showPolygonContextMenu(e.evt.clientX, e.evt.clientY, group);
         });
 
-        // Initialize drag and drop
+        function loadImageFiles(files) {
+            const readers = Array.from(files).map(file => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = event => resolve({ name: file.name, dataURL: event.target.result });
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            }));
+            return Promise.all(readers).then(loadImageSources);
+        }
+
+        document.getElementById(uploadId).addEventListener('change', event => {
+            loadImageFiles(event.target.files);
+            event.target.value = '';
+        });
+
         const dragDropHandler = DragDropManager.init(
             container,
-            (files) => {
-                let loaded = 0;
-                const total = files.length;
-                UndoManager.beginBatch();
-                files.forEach(file => {
-                    const reader = new FileReader();
-                    reader.onload = evt => {
-                        const img = new Image();
-                        img.onload = () => {
-                            addBackgroundImage(img);
-                            loaded++;
-                            if (loaded === total) {
-                                UndoManager.endBatch();
-                                FeedbackManager.show(`${total} image(s) dropped`);
-                            }
-                        };
-                        img.src = evt.target.result;
-                    };
-                    reader.readAsDataURL(file);
-                });
-            },
+            loadImageFiles,
             {
                 showOverlay: true,
                 overlayId: 'leftPanelDropOverlay'
             }
         );
 
-        // Add polygon button
         document.getElementById(addBtnId).addEventListener('click', () => {
-            const newGroup = PolygonManager.createPolygonGroup(stage, polygonLayer, null, dirtyPolygons);
-            setSelectedPolygon(newGroup);
-            UndoManager.push({
-                undo: () => {
-                    newGroup.remove();
-                    dirtyPolygons.delete(newGroup._id);
-                    if (selectedGroup === newGroup) selectedGroup = null;
-                    polygonLayer.batchDraw();
-                },
-                redo: () => {
-                    polygonLayer.add(newGroup);
-                    dirtyPolygons.add(newGroup._id);
-                    setSelectedPolygon(newGroup);
-                    polygonLayer.batchDraw();
-                }
-            });
+            setDrawingMode(true);
+            FeedbackManager.show('Click four points to create a selection');
         });
 
         // Delete button
         document.getElementById(deleteBtnId).addEventListener('click', () => {
             deleteSelectedObjects();
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && drawingMode) {
-                cancelDrawing();
-                document.getElementById('toggleDrawingMode').textContent = 'Drawing Mode';
-                drawingMode = false;
-            }
-
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                deleteSelectedObjects();
-            }
         });
 
         function setSelectedPolygon(group) {
@@ -374,31 +472,17 @@ const LeftPanelManager = {
                 const imagesToDelete = selectedNodes.filter(node => node instanceof Konva.Image);
                 if (imagesToDelete.length === 0) return;
 
-                imagesToDelete.forEach(node => {
-                    node.remove();
-                    const index = bgImages.indexOf(node);
-                    if (index > -1) bgImages.splice(index, 1);
-                });
+                imagesToDelete.forEach(removeBackgroundImage);
                 tr.nodes([]);
-                bgLayer.draw();
 
                 UndoManager.push({
                     undo: () => {
-                        imagesToDelete.forEach(node => {
-                            bgLayer.add(node);
-                            bgImages.push(node);
-                        });
+                        imagesToDelete.forEach(restoreBackgroundImage);
                         tr.nodes([]);
-                        bgLayer.batchDraw();
                     },
                     redo: () => {
-                        imagesToDelete.forEach(node => {
-                            node.remove();
-                            const index = bgImages.indexOf(node);
-                            if (index > -1) bgImages.splice(index, 1);
-                        });
+                        imagesToDelete.forEach(removeBackgroundImage);
                         tr.nodes([]);
-                        bgLayer.batchDraw();
                     }
                 });
             }
@@ -580,118 +664,51 @@ const LeftPanelManager = {
             if (e.key === 'Shift') tr.keepRatio(false);
         });
 
-        // Initialize panning and zooming
         PanZoomManager.initPanning(stage);
         PanZoomManager.initZooming(stage);
 
-        window.leftPanel = {
-            loadImages: (images) => {
-                if (!images.length) return Promise.resolve(0);
+        const resizeObserver = new ResizeObserver(() => {
+            stage.size({ width: container.clientWidth, height: container.clientHeight });
+            stage.batchDraw();
+        });
+        resizeObserver.observe(container);
+        stage.referenceResizeObserver = resizeObserver;
 
-                UndoManager.beginBatch();
-                return Promise.all(images.map(imageData => new Promise(resolve => {
-                    const img = new Image();
-                    img.onload = () => {
-                        addBackgroundImage(img);
-                        resolve(true);
-                    };
-                    img.onerror = () => resolve(false);
-                    img.src = imageData.dataURL;
-                }))).then(results => {
-                    UndoManager.endBatch();
-                    const loaded = results.filter(Boolean).length;
-                    if (loaded > 0) FeedbackManager.show(`${loaded} image(s) loaded`);
-                    return loaded;
-                });
-            },
+        window.leftPanel = {
+            loadImages: loadImageSources,
 
             autoPackImages: () => {
-                if (bgImages.length === 0) return;
+                if (!activeImage) return;
 
-                const padding = 10;
-                const getDims = (img) => ({
-                    width: img.width() * Math.abs(img.scaleX()),
-                    height: img.height() * Math.abs(img.scaleY())
-                });
+                const image = activeImage;
+                const before = {
+                    x: image.x(), y: image.y(),
+                    width: image.width(), height: image.height(),
+                    view: { ...image.viewState }
+                };
+                const original = image.image();
+                const scale = Math.min(stage.width() / original.width, stage.height() / original.height);
+                const after = {
+                    x: (stage.width() - original.width * scale) / 2,
+                    y: (stage.height() - original.height * scale) / 2,
+                    width: original.width * scale,
+                    height: original.height * scale,
+                    view: { x: 0, y: 0, scale: 1 }
+                };
 
-                const before = bgImages.map(img => ({
-                    img,
-                    x: img.x(),
-                    y: img.y()
-                }));
+                const apply = state => {
+                    image.position({ x: state.x, y: state.y });
+                    image.size({ width: state.width, height: state.height });
+                    image.viewState = { ...state.view };
+                    stage.position({ x: state.view.x, y: state.view.y });
+                    stage.scale({ x: state.view.scale, y: state.view.scale });
+                    tr.nodes([]);
+                    stage.batchDraw();
+                };
 
-                const sorted = [...bgImages].sort((a, b) => {
-                    return getDims(b).height - getDims(a).height;
-                });
-
-                let totalArea = 0;
-                sorted.forEach(img => {
-                    const d = getDims(img);
-                    totalArea += d.width * d.height;
-                });
-                const targetRowWidth = Math.max(
-                    stage.width(),
-                    Math.sqrt(totalArea) * 1.4
-                );
-
-                let cursorX = 0;
-                let cursorY = 0;
-                let rowHeight = 0;
-
-                sorted.forEach(img => {
-                    const { width, height } = getDims(img);
-                    if (cursorX > 0 && cursorX + width > targetRowWidth) {
-                        cursorX = 0;
-                        cursorY += rowHeight + padding;
-                        rowHeight = 0;
-                    }
-                    img.position({ x: cursorX, y: cursorY });
-                    cursorX += width + padding;
-                    rowHeight = Math.max(rowHeight, height);
-                });
-
-                tr.nodes([]);
-
-                const viewWidth = stage.width();
-                const viewHeight = stage.height();
-                const layoutWidth = targetRowWidth;
-                const layoutHeight = cursorY + rowHeight;
-                const scale = Math.min(
-                    viewWidth / (layoutWidth + padding * 2),
-                    viewHeight / (layoutHeight + padding * 2),
-                    1
-                );
-                stage.scale({ x: scale, y: scale });
-                stage.position({ x: padding * scale, y: padding * scale });
-
-                const after = bgImages.map(img => ({
-                    img,
-                    x: img.x(),
-                    y: img.y()
-                }));
-
-                UndoManager.push({
-                    undo: () => {
-                        before.forEach(({ img, x, y }) => {
-                            img.position({ x, y });
-                        });
-
-                        tr.nodes([]);
-                        bgLayer.batchDraw();
-                    },
-
-                    redo: () => {
-                        after.forEach(({ img, x, y }) => {
-                            img.position({ x, y });
-                        });
-
-                        tr.nodes([]);
-                        bgLayer.batchDraw();
-                    }
-                });
-
-                bgLayer.batchDraw();
-                FeedbackManager.show('Arranged ' + bgImages.length + ' image(s)');
+                apply(after);
+                UndoManager.push({ undo: () => apply(before), redo: () => apply(after) });
+                FeedbackManager.show('Reference fitted to screen');
             }
         };
 

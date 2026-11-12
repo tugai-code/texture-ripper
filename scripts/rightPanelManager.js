@@ -203,7 +203,7 @@ const RightPanelManager = {
             // Create menu container
             const menu = document.createElement('div');
             menu.id = 'konva-context-menu';
-            menu.style.position = 'absolute';
+            menu.style.position = 'fixed';
             menu.style.top = y + 'px';
             menu.style.left = x + 'px';
             menu.style.background = '#f9f9f9';
@@ -242,8 +242,50 @@ const RightPanelManager = {
                 return item;
             }
 
-            // Copy option
+            function scaleTextureToAtlas(fraction) {
+                const snapshot = () => ({
+                    x: target.x(), y: target.y(),
+                    scaleX: target.scaleX(), scaleY: target.scaleY(),
+                    offsetX: target.offsetX(), offsetY: target.offsetY()
+                });
+                const before = snapshot();
+                const width = target.width();
+                const height = target.height();
+                if (!width || !height) return;
+
+                const radians = target.rotation() * Math.PI / 180;
+                const rotatedWidth = Math.abs(width * Math.cos(radians)) + Math.abs(height * Math.sin(radians));
+                const rotatedHeight = Math.abs(width * Math.sin(radians)) + Math.abs(height * Math.cos(radians));
+                const scale = Math.min(
+                    stage.bgRect.width() * fraction / rotatedWidth,
+                    stage.bgRect.height() * fraction / rotatedHeight
+                );
+
+                target.offset({ x: width / 2, y: height / 2 });
+                target.position({ x: stage.bgRect.width() / 2, y: stage.bgRect.height() / 2 });
+                target.scale({
+                    x: Math.sign(before.scaleX) * scale,
+                    y: Math.sign(before.scaleY) * scale
+                });
+                tr.forceUpdate();
+                stage.batchDraw();
+
+                const after = snapshot();
+                const apply = state => {
+                    target.position({ x: state.x, y: state.y });
+                    target.scale({ x: state.scaleX, y: state.scaleY });
+                    target.offset({ x: state.offsetX, y: state.offsetY });
+                    tr.forceUpdate();
+                    stage.batchDraw();
+                };
+                UndoManager.push({ undo: () => apply(before), redo: () => apply(after) });
+            }
+
             menu.appendChild(createMenuItem('Copy', () => copyTexture(target)));
+            menu.appendChild(createMenuItem('Fill Atlas', () => scaleTextureToAtlas(1)));
+            menu.appendChild(createMenuItem('1/2 Atlas', () => scaleTextureToAtlas(1 / 2)));
+            menu.appendChild(createMenuItem('1/4 Atlas', () => scaleTextureToAtlas(1 / 4)));
+            menu.appendChild(createMenuItem('1/8 Atlas', () => scaleTextureToAtlas(1 / 8)));
 
             // Flip X
             menu.appendChild(createMenuItem('Flip X', () => {
@@ -302,6 +344,9 @@ const RightPanelManager = {
             }));
 
             document.body.appendChild(menu);
+            const menuRect = menu.getBoundingClientRect();
+            menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menuRect.width - 8))}px`;
+            menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menuRect.height - 8))}px`;
 
             // Remove menu when clicking elsewhere
             const removeMenu = () => {
@@ -412,9 +457,13 @@ const RightPanelManager = {
             };
         }
 
-        // Initialize panning and zooming
         PanZoomManager.initPanning(stage);
         PanZoomManager.initZooming(stage);
+
+        const resizeObserver = new ResizeObserver(() => RightPanelManager.fitAtlas(stage));
+        resizeObserver.observe(container);
+        stage.atlasResizeObserver = resizeObserver;
+        requestAnimationFrame(() => RightPanelManager.fitAtlas(stage));
 
         // API for updating textures
         window.rightPanel = {
@@ -423,10 +472,11 @@ const RightPanelManager = {
                 img.onload = () => {
                     if (tiedRects[groupId]) {
                         tiedRects[groupId].image(img);
+                        tiedRects[groupId].size({ width: img.width, height: img.height });
                     } else {
                         const konvaImg = new Konva.Image({
-                            x: stagePixelWidth / 4,
-                            y: stagePixelHeight / 4,
+                            x: stage.bgRect.width() / 4,
+                            y: stage.bgRect.height() / 4,
                             image: img,
                             id: `rect_${groupId}`,
                             draggable: true
@@ -539,6 +589,24 @@ const RightPanelManager = {
         };
 
         return stage;
+    },
+
+    fitAtlas: (stage) => {
+        const container = stage.container();
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const atlasWidth = stage.bgRect.width();
+        const atlasHeight = stage.bgRect.height();
+        if (!containerWidth || !containerHeight || !atlasWidth || !atlasHeight) return;
+
+        stage.size({ width: containerWidth, height: containerHeight });
+        const scale = Math.min(containerWidth / atlasWidth, containerHeight / atlasHeight);
+        stage.scale({ x: scale, y: scale });
+        stage.position({
+            x: (containerWidth - atlasWidth * scale) / 2,
+            y: (containerHeight - atlasHeight * scale) / 2
+        });
+        stage.batchDraw();
     },
 
     // Toggle between solid color and checkerboard background

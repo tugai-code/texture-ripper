@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.rightPanel.updateBackground();
             }
 
-            stageRight.draw();
+            RightPanelManager.fitAtlas(stageRight);
         }, 100);
     }
 

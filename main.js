@@ -162,17 +162,29 @@ ipcMain.handle('get-app-info', () => ({
   autoUpdates: app.isPackaged && !isMac
 }));
 
+async function collectImageFiles(filePath) {
+  const stats = await fs.stat(filePath);
+  if (stats.isFile()) return imageTypes[path.extname(filePath).toLowerCase()] ? [filePath] : [];
+  if (!stats.isDirectory()) return [];
+
+  const entries = await fs.readdir(filePath, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(entry => collectImageFiles(path.join(filePath, entry.name))));
+  return nested.flat();
+}
+
 ipcMain.handle('open-images', async (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(window, {
-    title: 'Open Images',
-    properties: ['openFile', 'multiSelections'],
+    title: 'Open Images or Reference Folder',
+    properties: ['openFile', 'openDirectory', 'multiSelections'],
     filters: [{ name: 'Images', extensions: Object.keys(imageTypes).map(ext => ext.slice(1)) }]
   });
 
   if (result.canceled) return [];
 
-  return Promise.all(result.filePaths.map(async filePath => {
+  const selectedFiles = await Promise.all(result.filePaths.map(collectImageFiles));
+  const filePaths = [...new Set(selectedFiles.flat())].sort();
+  return Promise.all(filePaths.map(async filePath => {
     const data = await fs.readFile(filePath);
     return {
       name: path.basename(filePath),

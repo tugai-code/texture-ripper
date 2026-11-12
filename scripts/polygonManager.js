@@ -454,7 +454,8 @@ const PolygonManager = {
 
     // Get the Konva.Image objects underneath a polygon group
     getUnderlyingImages: (group, stage) => {
-        const images = stage.find('Image');
+        if (group.sourceImage) return [group.sourceImage];
+        const images = stage.find('Image').filter(image => image.isVisible());
         if (!images || images.length === 0) return [];
 
         const groupBox = group.getClientRect();
@@ -627,15 +628,8 @@ const PolygonManager = {
                     tempLines.push(line);
                 }
 
-                // If we have 4 points, complete the polygon
                 if (tempPoints.length === 4) {
-                    const completedPolygon = completePolygon();
-                    if (completedPolygon) {
-                        // Set the new polygon as the selected group
-                        if (typeof onPolygonCreated === 'function') {
-                            onPolygonCreated(completedPolygon);
-                        }
-                    }
+                    completePolygon();
                 }
             }
         };
@@ -667,10 +661,21 @@ const PolygonManager = {
         };
 
         const contextMenuHandler = (e) => {
-            // Use the passed function to get drawing mode state
-            if (getDrawingMode()) {
+            let node = e.target;
+            let clickedOnExistingPolygon = false;
+            while (node && node !== stage) {
+                if (node instanceof Konva.Group && node.name() === 'group') {
+                    clickedOnExistingPolygon = true;
+                    break;
+                }
+                node = node.getParent();
+            }
+
+            if (getDrawingMode() && tempPoints.length > 0 && !clickedOnExistingPolygon) {
                 e.evt.preventDefault();
+                tempPoints = [];
                 clearTempElements();
+                drawingGroup.batchDraw();
             }
         };
 

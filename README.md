@@ -53,23 +53,19 @@ Original application by [Maksim Jovovic / Raycastly](https://github.com/raycastl
 
 [![Watch the 5 minute tutorial!](img/click-to-watch.jpg)](https://youtu.be/35BKxvY3vLY)
 
-1. Go to [Raycastly Texture Ripper](https://raycastly.github.io/texture-ripper)
-2. Upload one or more images
-3. Lock the images so they don’t accidentally move
-4. Add rectangles in two ways:
-   - Press the **Add Rectangle** button and position the vertices
-   - *(W.I.P.)* Enter **drawing mode** and draw the vertices
-5. Press **Extract All** at any time to generate flattened textures
-6. Use the right panel to set the output resolution of your texture atlas
-7. Position, rotate, and scale the extracted textures within the atlas
-8. Adjust polygons in the left panel and click **Extract All** again to refresh
-9. Choose whether to export with a transparent background
+1. Go to [Raycastly Texture Ripper](https://raycastly.github.io/texture-ripper) or open the desktop app.
+2. Open several images or a reference folder. Use the thumbnails below the source canvas to switch between independent reference screens.
+3. Lock the active image so it doesn’t accidentally move.
+4. Press **S** or enable drawing mode with **A**, then click exactly four points. The selection closes automatically.
+5. Right-click a selection and choose **Create Texture**, or press **Extract All** to process every changed selection.
+6. Use the right panel to set the output resolution. The atlas preview fits the panel while preserving the exact export aspect ratio.
+7. Position, rotate, and scale the extracted textures. Right-click a texture for **Fill Atlas**, **1/2 Atlas**, **1/4 Atlas**, and **1/8 Atlas**; these options preserve proportions and center it.
+8. Adjust polygons and extract them again to refresh their textures.
+9. Choose whether to export with a transparent background.
 10. Click **Export** — your textures are ready 🎉
 
 ---
 
 ## ⚠️ Known Issues
 - Draw mode can get bugged if you pan with the middle mouse button in the middle of drawing a polygon
-- Draw mode polygons sometimes extract lower-resolution textures; it’s best to use the **Add Rectangle** button instead
-- Deleting all images in the left panel can prevent new images from loading until the page is refreshed
 - Scaling extracted textures does not snap to edges yet
