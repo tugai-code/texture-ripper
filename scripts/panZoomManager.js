@@ -91,15 +91,7 @@ const PanZoomManager = {
                 y: (pointer.y - stage.y()) / oldScale,
             };
 
-            // How to scale? Zoom in? Or zoom out?
-            let direction = e.evt.deltaY > 0 ? -1 : 1;
-
-            // When we zoom on trackpad, e.evt.ctrlKey is true
-            // In that case lets revert direction
-            if (e.evt.ctrlKey) {
-                direction = -direction;
-            }
-
+            const direction = e.evt.deltaY > 0 ? -1 : 1;
             const newScale = direction > 0 ? oldScale * CONFIG.ZOOM.SCALE_BY : oldScale / CONFIG.ZOOM.SCALE_BY;
 
             stage.scale({ x: newScale, y: newScale });

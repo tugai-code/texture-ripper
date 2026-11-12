@@ -22,6 +22,33 @@ This tool is based on the Shoebox Texture Ripper. I didn't like the controls on 
 
 ---
 
+## 🍎 macOS Desktop
+
+This fork adds a desktop build for Apple Silicon (`arm64`) and Intel (`x64`) Macs while preserving the browser and Windows versions. Download the DMG for your architecture from [this fork's Releases](https://github.com/tugai-code/texture-ripper/releases/latest), open it, and drag **Texture Ripper** to **Applications**.
+
+The current macOS packages are unsigned and not notarized. macOS may warn that the developer cannot be verified. If you trust the build, open the app from Finder with **Control-click → Open** and confirm. macOS builds open the Releases page for updates; Windows packages retain automatic updates.
+
+### Run and build locally
+
+Requirements: macOS, Node.js 20 or later, and npm.
+
+```bash
+npm ci
+npm start
+```
+
+Build both architectures as DMG and ZIP packages in `dist/`:
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run build:mac
+```
+
+To create signed and notarized release packages, configure your Apple Developer credentials instead of disabling identity discovery. The app includes hardened-runtime entitlements and an ICNS icon.
+
+Original application by [Maksim Jovovic / Raycastly](https://github.com/raycastly/texture-ripper). This macOS work is maintained in the [tugai-code fork](https://github.com/tugai-code/texture-ripper). The upstream repository does not currently include a license file.
+
+---
+
 ## 🚀 How to Use
 
 [![Watch the 5 minute tutorial!](img/click-to-watch.jpg)](https://youtu.be/35BKxvY3vLY)

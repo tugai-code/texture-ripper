@@ -1,0 +1,72 @@
+name: macOS Release
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve new release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          RUN_CREATED_AT: ${{ github.event.workflow_run.created_at }}
+        run: |
+          if [ -n "$REQUESTED_TAG" ]; then
+            tag="$REQUESTED_TAG"
+          else
+            release=$(gh release view --json tagName,publishedAt) || { echo "No published release; skipping."; exit 0; }
+            tag=$(node -e 'console.log(JSON.parse(process.argv[1]).tagName)' "$release")
+            published_at=$(node -e 'console.log(JSON.parse(process.argv[1]).publishedAt)' "$release")
+            if ! node -e 'process.exit(new Date(process.argv[2]) >= new Date(process.argv[1]) ? 0 : 1)' "$RUN_CREATED_AT" "$published_at"; then
+              echo "Latest release predates this workflow run; skipping."
+              exit 0
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        if: steps.release.outputs.tag != ''
+        run: git checkout "refs/tags/${{ steps.release.outputs.tag }}"
+
+      - name: Setup Node.js
+        if: steps.release.outputs.tag != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.release.outputs.tag != ''
+        run: npm ci
+
+      - name: Build macOS packages
+        if: steps.release.outputs.tag != ''
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build:mac
+
+      - name: Upload macOS packages
+        if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.release.outputs.tag }}" dist/*.dmg dist/*.zip dist/latest-mac.yml --clobber

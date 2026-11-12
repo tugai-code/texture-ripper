@@ -585,6 +585,26 @@ const LeftPanelManager = {
         PanZoomManager.initZooming(stage);
 
         window.leftPanel = {
+            loadImages: (images) => {
+                if (!images.length) return Promise.resolve(0);
+
+                UndoManager.beginBatch();
+                return Promise.all(images.map(imageData => new Promise(resolve => {
+                    const img = new Image();
+                    img.onload = () => {
+                        addBackgroundImage(img);
+                        resolve(true);
+                    };
+                    img.onerror = () => resolve(false);
+                    img.src = imageData.dataURL;
+                }))).then(results => {
+                    UndoManager.endBatch();
+                    const loaded = results.filter(Boolean).length;
+                    if (loaded > 0) FeedbackManager.show(`${loaded} image(s) loaded`);
+                    return loaded;
+                });
+            },
+
             autoPackImages: () => {
                 if (bgImages.length === 0) return;
 

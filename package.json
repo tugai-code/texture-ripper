@@ -5,6 +5,8 @@
   "author": "Maksim Jovovic - Raycastly",
   "main": "main.js",
   "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac --arm64 --x64",
     "build:win": "electron-builder --win --x64",
     "semantic-release": "semantic-release"
   },
@@ -17,9 +19,37 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "raycastly",
+      "owner": "tugai-code",
       "repo": "texture-ripper",
       "releaseType": "release"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.graphics-design",
+      "artifactName": "Texture-Ripper-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "Texture Ripper ${version}",
+      "contents": [
+        {
+          "x": 140,
+          "y": 180
+        },
+        {
+          "x": 390,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "win": {
       "icon": "assets/icon.ico",
